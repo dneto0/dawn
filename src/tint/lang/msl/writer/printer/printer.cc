@@ -35,6 +35,7 @@
 #include "src/tint/lang/core/constant/splat.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/access.h"
+#include "src/tint/lang/core/ir/analysis/loop_analysis.h"
 #include "src/tint/lang/core/ir/bitcast.h"
 #include "src/tint/lang/core/ir/break_if.h"
 #include "src/tint/lang/core/ir/constant.h"
@@ -141,7 +142,9 @@ class Printer : public tint::TextGenerator {
 
         // Emit functions.
         for (auto* func : ir_.DependencyOrderedFunctions()) {
+            loop_analysis_ = std::make_unique<core::ir::analysis::LoopAnalysis>(*func);
             EmitFunction(func);
+            loop_analysis_.reset();
         }
 
         StringStream ss;
@@ -159,6 +162,7 @@ class Printer : public tint::TextGenerator {
     Hashmap<const core::type::Struct*, std::string, 4> builtin_struct_names_;
 
     core::ir::Module& ir_;
+    std::unique_ptr<core::ir::analysis::LoopAnalysis> loop_analysis_;
 
     /// A hashmap of value to name
     Hashmap<const core::ir::Value*, std::string, 32> names_;
@@ -671,6 +675,9 @@ class Printer : public tint::TextGenerator {
         Line() << "{";
         {
             ScopedIndent init(current_buffer_);
+            if (auto* info = loop_analysis_->GetInfo(*l)) {
+                Line() << "// " << *info;
+            }
             EmitBlock(l->Initializer());
 
             Line() << "while(true) {";

@@ -27,26 +27,74 @@
 
 #include "src/tint/lang/core/ir/analysis/loop_analysis.h"
 
-#include "src/tint/lang/core/ir/module.h"
+#include "src/tint/lang/core/ir/exit_loop.h"
+#include "src/tint/lang/core/ir/function.h"
+#include "src/tint/lang/core/ir/loop.h"
+#include "src/tint/lang/core/ir/multi_in_block.h"
+#include "src/tint/lang/core/ir/traverse.h"
+#include "src/tint/lang/core/ir/var.h"
 #include "src/tint/utils/ice/ice.h"
 
 namespace tint::core::ir::analysis {
 
+std::ostream& operator<<(std::ostream& os, const LoopInfo& li) {
+    StringStream ss;
+    ss << li;
+    return os << ss.str();
+}
+
+StringStream& operator<<(StringStream& ss, const LoopInfo& li) {
+    ss << "LoopInfo( indexVar " << li.indexVar << ", indexStrictUpperBound "
+       << li.indexStrictUpperBound << ")";
+    return ss;
+}
+
 struct LoopAnalysisImpl {
-    LoopAnalysisImpl(const ir::Function func) : func_(func) { Analyze(); }
+    LoopAnalysisImpl(ir::Function& func) {
+        Traverse(func.Block(), [&](Loop* l) { AnalyzeLoop(*l); });
+    }
+    void AnalyzeLoop(ir::Loop& loop);
 
-    void Analyze();
-    std::optional<const LoopInfo> LoopAnalysisImpl::GetInfo(Id id) const;
+    const LoopInfo* GetInfo(const ir::Loop&) const;
+};
 
-    const ir::Function& func_;
+namespace {
+
+bool IsSimpleLoopExit(ir::Block* b) {
+    return (b->Front() == b->Back()) && b->Front()->Is<ExitLoop>();
+}
+}  // anonymous namespace
+
+void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
+    Vector<Var*, 8> candidate_vars;
+    if (auto* init_block = loop.Initializer()) {
+        Traverse(init_block, [&](Var* var) {
+            auto* ty = var->Results()[0]->Type();
+            if (!ty->IsIntegerScalar()) {
+                return;
+            }
+            //  don't care about initial value, as long as there as is progress.
+            candidate_vars.Push(var);
+        });
+    }
+    if (candidate_vars.IsEmpty()) {
+        return;
+    }
+    // traverse the body
+    for (auto* i : *loop.Body()) {
+        i = i;
+    }
 }
 
-std::optional<const LoopInfo>
-LoopAnalysisImpl::GetInfo(Id id) const {
-    return std::nullopt_t;
+const LoopInfo* LoopAnalysisImpl::GetInfo(const ir::Loop&) const {
+    return nullptr;
 }
 
-LoopAnalysis::LoopAnalysis(const ir::Function& func) : impl_(new LoopAnalysisImpl(func)) {}
+LoopAnalysis::LoopAnalysis(ir::Function& func) : impl_(new LoopAnalysisImpl(func)) {}
 LoopAnalysis::~LoopAnalysis() = default;
+
+const LoopInfo* LoopAnalysis::GetInfo(const ir::Loop& loop) const {
+    return impl_->GetInfo(loop);
+}
 
 }  // namespace tint::core::ir::analysis

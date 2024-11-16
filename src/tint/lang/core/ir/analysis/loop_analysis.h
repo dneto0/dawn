@@ -30,7 +30,11 @@
 
 #include <memory>
 #include <optional>
+#include <ostream>
+#include "src/tint/lang/core/ir/function.h"
 #include "src/tint/lang/core/ir/instruction.h"
+#include "src/tint/lang/core/ir/loop.h"
+#include "src/tint/utils/text/string_stream.h"
 
 namespace tint::core::ir::analysis {
 
@@ -43,25 +47,24 @@ struct LoopInfo {
     // Otherwise it is 0.
     const Id indexStrictUpperBound = 0;
     bool IsFinite() const { return indexStrictUpperBound > 0; }
-}
+};
+std::ostream& operator<<(std::ostream&, const LoopInfo&);
+StringStream& operator<<(StringStream&, const LoopInfo&);
 
 struct LoopAnalysisImpl;
 
 class LoopAnalysis {
   public:
-    using Result = std::unordered_map<Id, LoopInfo*>
-
     /// Constructor
     /// @param f the function being analyzed
-    LoopAnalysis(const ir::Function& func);
+    LoopAnalysis(ir::Function& func);
     ~LoopAnalysis();
     LoopAnalysis(const LoopAnalysis&) = delete;
     LoopAnalysis(LoopAnalysis&&) = delete;
 
     /// Returns the info for a given loop, if it is a loop.
-    /// Otherwise is not analyzable, and has no value.
-    /// @param id the ID of the loop
-    std::optional<const LoopInfo> GetInfo(Id id) const;
+    /// Otherwise is not analyzable, and returns nullptr.
+    const LoopInfo* GetInfo(const Loop&) const;
 
   private:
     std::unique_ptr<LoopAnalysisImpl> impl_;
