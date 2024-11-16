@@ -33,19 +33,20 @@
 namespace tint::core::ir::analysis {
 
 struct LoopAnalysisImpl {
-  LoopAnalysisImpl(const ir::Function func) : func_(func) { Analyze(); }
+    LoopAnalysisImpl(const ir::Function func) : func_(func) { Analyze(); }
 
-  void Analyze();
-  std::optional<const LoopInfo> LoopAnalysisImpl::GetInfo(Id id) const;
+    void Analyze();
+    std::optional<const LoopInfo> LoopAnalysisImpl::GetInfo(Id id) const;
 
-  const ir::Function& func_;
+    const ir::Function& func_;
 }
 
-std::optional<const LoopInfo> LoopAnalysisImpl::GetInfo(Id id) const {
-   return std::nullopt_t;
+std::optional<const LoopInfo>
+LoopAnalysisImpl::GetInfo(Id id) const {
+    return std::nullopt_t;
 }
 
 LoopAnalysis::LoopAnalysis(const ir::Function& func) : impl_(new LoopAnalysisImpl(func)) {}
 LoopAnalysis::~LoopAnalysis() = default;
-  
+
 }  // namespace tint::core::ir::analysis

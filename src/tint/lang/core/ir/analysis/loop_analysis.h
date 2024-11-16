@@ -37,12 +37,12 @@ namespace tint::core::ir::analysis {
 using Id = Instruction::Id;
 
 struct LoopInfo {
-  // ID of the deduced variable used as the loop index.
-  const Id indexVar = 0;
-  // One more than the highest value of the loop index, if it could be inferred.
-  // Otherwise it is 0.
-  const Id indexStrictUpperBound = 0;
-  bool IsFinite() const { return indexStrictUpperBound > 0; }
+    // ID of the deduced variable used as the loop index.
+    const Id indexVar = 0;
+    // One more than the highest value of the loop index, if it could be inferred.
+    // Otherwise it is 0.
+    const Id indexStrictUpperBound = 0;
+    bool IsFinite() const { return indexStrictUpperBound > 0; }
 }
 
 struct LoopAnalysisImpl;
