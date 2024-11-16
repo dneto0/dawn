@@ -26,14 +26,20 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/ir/analysis/loop_analysis.h"
+#include <iostream>
 
 #include "src/tint/lang/core/ir/exit_loop.h"
 #include "src/tint/lang/core/ir/function.h"
+#include "src/tint/lang/core/ir/load.h"
 #include "src/tint/lang/core/ir/loop.h"
 #include "src/tint/lang/core/ir/multi_in_block.h"
+#include "src/tint/lang/core/ir/store.h"
 #include "src/tint/lang/core/ir/traverse.h"
 #include "src/tint/lang/core/ir/var.h"
+#include "src/tint/lang/core/type/pointer.h"
+#include "src/tint/lang/core/type/type.h"
 #include "src/tint/utils/ice/ice.h"
+#include "src/tint/utils/rtti/switch.h"
 
 namespace tint::core::ir::analysis {
 
@@ -60,29 +66,66 @@ struct LoopAnalysisImpl {
 
 namespace {
 
+#if 0
 bool IsSimpleLoopExit(ir::Block* b) {
     return (b->Front() == b->Back()) && b->Front()->Is<ExitLoop>();
 }
+#endif
 }  // anonymous namespace
 
 void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
+    std::cerr << "loop " << std::endl;
     Vector<Var*, 8> candidate_vars;
     if (auto* init_block = loop.Initializer()) {
+        std::cerr << "init_block " << std::endl;
         Traverse(init_block, [&](Var* var) {
-            auto* ty = var->Results()[0]->Type();
-            if (!ty->IsIntegerScalar()) {
+            const auto* pty = var->Result(0)->Type()->As<core::type::Pointer>();
+            std::cerr << "inst " << std::endl;
+            if (!pty->StoreType()->IsIntegerScalar()) {
                 return;
             }
             //  don't care about initial value, as long as there as is progress.
+            std::cerr << "candidate var " << std::endl;
             candidate_vars.Push(var);
         });
     }
     if (candidate_vars.IsEmpty()) {
         return;
     }
-    // traverse the body
-    for (auto* i : *loop.Body()) {
-        i = i;
+
+    for (Var* cv : candidate_vars) {
+        ir::Store* single_store = nullptr;
+        bool keep_going = true;
+        auto skip = [&] {
+            keep_going = false;
+            single_store = nullptr;
+        };
+
+        cv->Result(0)->ForEachUseSorted([&](Usage u) {
+            if (keep_going) {
+                Switch(
+                    u.instruction, [&](Load* l) { std::cerr << "load " << std::endl; },
+                    [&](Store* s) {
+                        if (s->Block() != loop.Continuing()) {
+                            skip();
+                            return;
+                        }
+                        if (single_store) {
+                            // more than one store. Skip it.
+                            skip();
+                            return;
+                        }
+                        single_store = s;
+                    },
+                    [&](Default) {
+                        skip();
+                        return;
+                    });
+            }
+        });
+        if (single_store) {
+            std::cerr << "single store" << std::endl;
+        }
     }
 }
 
