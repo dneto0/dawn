@@ -39,9 +39,9 @@
 #include "src/tint/lang/core/ir/traverse.h"
 #include "src/tint/lang/core/ir/value.h"
 #include "src/tint/lang/core/ir/var.h"
+#include "src/tint/lang/core/type/i32.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/type.h"
-#include "src/tint/lang/core/type/i32.h"
 #include "src/tint/lang/core/type/u32.h"
 #include "src/tint/utils/ice/ice.h"
 #include "src/tint/utils/rtti/switch.h"
@@ -79,29 +79,35 @@ bool IsSimpleLoopExit(ir::Block* b) {
 
 // Returns true if v is the constant 1.
 bool IsOne(Value* v) {
-  if (auto* cv = v->As<ir::Constant>()) {
-    return Switch(cv->Type(),
-      [&](core::type::I32*) { return cv->ValueAs<i32>() == 1; },
-      [&](core::type::U32*) { return cv->ValueAs<u32>() == 1; },
-      [&](Default) { TINT_UNIMPLEMENTED(); }
-  }
-  return false;
+    if (auto* cv = v->As<ir::Constant>()) {
+        return Switch(
+            cv->Type(),
+            [&](const core::type::I32* t) { return cv->Value()->ValueAs<int32_t>() == 1; },
+            [&](const core::type::U32* t) { return cv->Value()->ValueAs<uint32_t>() == 1; },
+            [&](const Default) -> bool { return false; });
+    }
+    return false;
 }
 
 bool IsIncrementOf(ir::Var* var, ir::Value* val) {
-  if (auto* binary = val->As<ir::Binary>()) {
-    if (binary->Op() == BinaryOp::kAdd) {
-      auto is_add_one = [&](Value* a, value* b) {
-        if (auto* load = a->As<ir::Load>()) {
-           return (load->From() == var) && IsOne(b);
+    auto* varptr = var->Result(0);
+    if (auto* val_inst = val->Instruction()) {
+        if (auto* binary = val_inst->As<ir::Binary>()) {
+            if (binary->Op() == BinaryOp::kAdd) {
+                auto is_add_one = [&](Value* a, Value* b) {
+                    if (auto* a_inst = a->Instruction()) {
+                        if (auto* load = a_inst->As<ir::Load>()) {
+                            return (load->From() == var) && IsOne(b);
+                        }
+                    }
+                    return false;
+                };
+                return is_add_one(binary->LHS(), binary->RHS()) ||
+                       is_add_one(binary->RHS(), binary->LHS());
+            }
         }
-        return false;
-      };
-      return is_add_one(binary->LHS(), binary->RHS())
-        ||is_add_one(binary->RHS(), binary->LHS());
     }
-  }
-  return false;
+    return false;
 }
 
 }  // anonymous namespace
@@ -128,7 +134,7 @@ void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
 
     for (Var* cv : candidate_vars) {
         // Loads of the candidate variable.
-        HashSet<Load*> loads; 
+        Hashset<Load*, 16> loads;
         ir::Store* single_store = nullptr;
         bool keep_going = true;
         auto skip = [&] {
@@ -139,9 +145,7 @@ void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
         cv->Result(0)->ForEachUseSorted([&](Usage u) {
             if (keep_going) {
                 Switch(
-                    u.instruction, [&](Load* l) { 
-                       loads.Add(l);
-                    },
+                    u.instruction, [&](Load* l) { loads.Add(l); },
                     [&](Store* s) {
                         if (s->Block() != loop.Continuing()) {
                             skip();
@@ -154,8 +158,7 @@ void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
                         }
                         single_store = s;
                     },
-                    [&](Binary* b) {
-                    }
+                    [&](Binary* b) {},
                     [&](Default) {
                         skip();
                         return;
@@ -163,10 +166,10 @@ void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
             }
         });
         if (single_store) {
-          std::cerr << "single store" << std::endl;
-          if (IsIncrementOf(cv, single_store->From())) {
-            std::cerr << "  increment of k" << std::endl;
-          }
+            std::cerr << "single store" << std::endl;
+            if (IsIncrementOf(cv, single_store->From())) {
+                std::cerr << "  increment of k" << std::endl;
+            }
         }
     }
 }
