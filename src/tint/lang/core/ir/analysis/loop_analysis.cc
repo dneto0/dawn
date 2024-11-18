@@ -30,7 +30,9 @@
 
 #include "src/tint/lang/core/binary_op.h"
 #include "src/tint/lang/core/ir/binary.h"
+#include "src/tint/lang/core/ir/bitcast.h"
 #include "src/tint/lang/core/ir/exit_loop.h"
+#include "src/tint/lang/core/ir/if.h"
 #include "src/tint/lang/core/ir/function.h"
 #include "src/tint/lang/core/ir/load.h"
 #include "src/tint/lang/core/ir/loop.h"
@@ -55,8 +57,7 @@ std::ostream& operator<<(std::ostream& os, const LoopInfo& li) {
 }
 
 StringStream& operator<<(StringStream& ss, const LoopInfo& li) {
-    ss << "LoopInfo( indexVar " << li.indexVar << ", indexStrictUpperBound "
-       << li.indexStrictUpperBound << ")";
+    ss << "LoopInfo( var " << li.indexVar << ")";
     return ss;
 }
 
@@ -66,16 +67,28 @@ struct LoopAnalysisImpl {
     }
     void AnalyzeLoop(ir::Loop& loop);
 
-    const LoopInfo* GetInfo(const ir::Loop&) const;
+    const LoopInfo* GetInfo(ir::Loop& loop) const {
+      return loop_info_map_.Get(&loop).value;
+    }
+    private:
+      Hashmap<ir::Loop*, LoopInfo,8> loop_info_map_;
 };
 
 namespace {
 
-#if 0
-bool IsSimpleLoopExit(ir::Block* b) {
-    return (b->Front() == b->Back()) && b->Front()->Is<ExitLoop>();
+// Returns the value found after following backward through
+// any number of bitcasts.
+ir::Value* UnwrapBitcasts(Value* v) {
+    do {
+        if (auto* ir = v->As<ir::InstructionResult>()) {
+            if (auto* bc = ir->Instruction()->As<ir::Bitcast>()) {
+                v = bc->Val();
+                continue;
+            }
+        }
+    } while (false);
+    return v;
 }
-#endif
 
 // Returns true if v is the constant 1.
 bool IsOne(Value* v) {
@@ -85,27 +98,6 @@ bool IsOne(Value* v) {
             [&](const core::type::I32* t) { return cv->Value()->ValueAs<int32_t>() == 1; },
             [&](const core::type::U32* t) { return cv->Value()->ValueAs<uint32_t>() == 1; },
             [&](const Default) -> bool { return false; });
-    }
-    return false;
-}
-
-bool IsIncrementOf(ir::Var* var, ir::Value* val) {
-    auto* varptr = var->Result(0);
-    if (auto* val_inst = val->Instruction()) {
-        if (auto* binary = val_inst->As<ir::Binary>()) {
-            if (binary->Op() == BinaryOp::kAdd) {
-                auto is_add_one = [&](Value* a, Value* b) {
-                    if (auto* a_inst = a->Instruction()) {
-                        if (auto* load = a_inst->As<ir::Load>()) {
-                            return (load->From() == var) && IsOne(b);
-                        }
-                    }
-                    return false;
-                };
-                return is_add_one(binary->LHS(), binary->RHS()) ||
-                       is_add_one(binary->RHS(), binary->LHS());
-            }
-        }
     }
     return false;
 }
@@ -134,18 +126,36 @@ void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
 
     for (Var* cv : candidate_vars) {
         // Loads of the candidate variable.
-        Hashset<Load*, 16> loads;
+        Hashset<Value*, 16> load_values;
         ir::Store* single_store = nullptr;
         bool keep_going = true;
         auto skip = [&] {
             keep_going = false;
             single_store = nullptr;
         };
+        auto is_increment_of_load = [&](ir::Value* val) {
+            return Switch(
+                UnwrapBitcasts(val),
+                [&](core::ir::InstructionResult* ir) {
+                    if (auto* binary = ir->Instruction()->As<ir::Binary>()) {
+                        if (binary->Op() == BinaryOp::kAdd) {
+                            auto is_add_one = [&](Value* a, Value* b) {
+                                return load_values.Contains(a) && IsOne(b);
+                            };
+                            auto* lhs = UnwrapBitcasts(binary->LHS());
+                            auto* rhs = UnwrapBitcasts(binary->RHS());
+                            return is_add_one(lhs, rhs) || is_add_one(rhs, lhs);
+                        }
+                    }
+                    return false;
+                },
+                [&](Default) { return false; });
+        };
 
         cv->Result(0)->ForEachUseSorted([&](Usage u) {
             if (keep_going) {
                 Switch(
-                    u.instruction, [&](Load* l) { loads.Add(l); },
+                    u.instruction, [&](Load* l) { load_values.Add(l->Result(0)); },
                     [&](Store* s) {
                         if (s->Block() != loop.Continuing()) {
                             skip();
@@ -167,21 +177,74 @@ void LoopAnalysisImpl::AnalyzeLoop(ir::Loop& loop) {
         });
         if (single_store) {
             std::cerr << "single store" << std::endl;
-            if (IsIncrementOf(cv, single_store->From())) {
-                std::cerr << "  increment of k" << std::endl;
+            if (!is_increment_of_load(single_store->From())) {
+              continue;
             }
         }
-    }
-}
+        // We've proven the variable increments exactly once per iteration.
+        // single_store is the only modification of the candidate index
+        // variable, it increments the candidate index variable, and it
+        // occurs directly in the continuing block. So if the loop reaches
+        // the next iteration, then we know the index variable progresses
+        // to the next value.
+        std::cerr << "  increment of k" << std::endl;
+  
+        // Check if the body exits the loop based on the index variable.
+        auto is_loop_exiting_if = [&](ir::If *i) {
+          // Returns true if cond is like  %k < constant
+          auto is_exiting_condition = [&](Value* cond) {
+            return Switch(cond,
+              [&](ir::InstructionResult* ir) {
+                if (auto* binary = ir->Instruction()->As<ir::Binary>()) {
+                  if (binary->Op() == BinaryOp::kLessThan) {
+                auto exiting_comparison = [&](Value* a, Value* b) {
+                  return load_values.Contains(a) && b->Is<ir::Constant>();
+                };
+                auto* lhs = UnwrapBitcasts(binary->LHS());
+                auto* rhs = UnwrapBitcasts(binary->RHS());
+                return exiting_comparison(lhs, rhs) || exiting_comparison(rhs, lhs);
+                  }
+                }
+                return false;
+              },
+              [&](Default) { return false; });
+         };
+         if (!is_exiting_condition(i->Condition())) {
+           return false;
+      }
+      
+          auto is_simple_loop_exit = [&](ir::Block* b) {
+            return b && (b->Front() == b->Back()) && b->Front()->Is<ExitLoop>();
+          };
+          return 
+            is_simple_loop_exit(i->True()) ||
+            is_simple_loop_exit(i->False());
+        };
 
-const LoopInfo* LoopAnalysisImpl::GetInfo(const ir::Loop&) const {
-    return nullptr;
+        bool keep_going_inst = true;
+        for (auto* inst: *loop.Body()) {
+          Switch(inst,
+            [&](ir::Load *load) { },
+            [&](ir::Binary *binary) { },
+            [&](ir::If* i) {
+              if (is_loop_exiting_if(i)) {
+                // The loop is finite!
+                loop_info_map_.Add(&loop, LoopInfo{cv});
+                return;
+              }
+              // Only look at one 'if'.
+              keep_going_inst = false;
+            },
+            [&](Default) { keep_going_inst = false; });
+          if (!keep_going_inst) break;
+        }
+    }
 }
 
 LoopAnalysis::LoopAnalysis(ir::Function& func) : impl_(new LoopAnalysisImpl(func)) {}
 LoopAnalysis::~LoopAnalysis() = default;
 
-const LoopInfo* LoopAnalysis::GetInfo(const ir::Loop& loop) const {
+const LoopInfo* LoopAnalysis::GetInfo(ir::Loop& loop) const {
     return impl_->GetInfo(loop);
 }
 

@@ -31,22 +31,17 @@
 #include <memory>
 #include <optional>
 #include <ostream>
+#include "src/tint/lang/core/ir/constant.h"
 #include "src/tint/lang/core/ir/function.h"
-#include "src/tint/lang/core/ir/instruction.h"
 #include "src/tint/lang/core/ir/loop.h"
+#include "src/tint/lang/core/ir/var.h"
 #include "src/tint/utils/text/string_stream.h"
 
 namespace tint::core::ir::analysis {
 
-using Id = Instruction::Id;
-
 struct LoopInfo {
-    // ID of the deduced variable used as the loop index.
-    const Id indexVar = 0;
-    // One more than the highest value of the loop index, if it could be inferred.
-    // Otherwise it is 0.
-    const Id indexStrictUpperBound = 0;
-    bool IsFinite() const { return indexStrictUpperBound > 0; }
+    const ir::Var* indexVar = nullptr;
+    bool IsFinite() const { return indexVar != nullptr; }
 };
 std::ostream& operator<<(std::ostream&, const LoopInfo&);
 StringStream& operator<<(StringStream&, const LoopInfo&);
@@ -64,7 +59,7 @@ class LoopAnalysis {
 
     /// Returns the info for a given loop, if it is a loop.
     /// Otherwise is not analyzable, and returns nullptr.
-    const LoopInfo* GetInfo(const Loop&) const;
+    const LoopInfo* GetInfo(Loop&) const;
 
   private:
     std::unique_ptr<LoopAnalysisImpl> impl_;

@@ -27,9 +27,12 @@
 
 #include "src/tint/lang/msl/writer/printer/printer.h"
 
+#include <iostream>
 #include <atomic>
 #include <cstdint>
 #include <utility>
+
+#include "src/tint/lang/core/ir/disassembler.h"
 
 #include "src/tint/lang/core/constant/composite.h"
 #include "src/tint/lang/core/constant/splat.h"
@@ -1767,6 +1770,9 @@ class Printer : public tint::TextGenerator {
 }  // namespace
 
 Result<PrintResult> Print(core::ir::Module& module) {
+
+core::ir::Disassembler d(module);
+std::cerr << d.Plain() << std::endl;
     return Printer{module}.Generate();
 }
 
